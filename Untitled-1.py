@@ -2,6 +2,9 @@ import cv2
 import pytesseract
 import numpy as np
 
+# Specify the path to the Tesseract executable
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
 def is_valid(board, row, col, num):
     for i in range(9):
         if board[row][i] == num or board[i][col] == num:
@@ -56,7 +59,7 @@ def order_points(pts):
 def extract_sudoku_board(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    thresh = cv2.adaptiveThreshold(blur, 255, 1, 1, 11, 2)
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
     
     # Debug: Show the thresholded image
     cv2.imshow('Thresholded Image', thresh)
@@ -75,7 +78,7 @@ def extract_sudoku_board(image):
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
     
     for contour in contours:
-        epsilon = 0.01 * cv2.arcLength(contour, True)  # Increase precision
+        epsilon = 0.02 * cv2.arcLength(contour, True)  # Increase precision
         approx = cv2.approxPolyDP(contour, epsilon, True)
         
         # Debug: Check the number of points in approx
@@ -84,10 +87,17 @@ def extract_sudoku_board(image):
         if len(approx) == 4:
             pts = np.float32([approx[0][0], approx[1][0], approx[2][0], approx[3][0]])
             ordered_pts = order_points(pts)
-            side = max([cv2.norm(ordered_pts[0] - ordered_pts[1]), cv2.norm(ordered_pts[1] - ordered_pts[2]), cv2.norm(ordered_pts[2] - ordered_pts[3]), cv2.norm(ordered_pts[3] - ordered_pts[0])])
-            dst = np.float32([[0, 0], [side - 1, 0], [side - 1, side - 1], [0, side - 1]])
+            
+            # Debug: Draw the points on the image
+            debug_image = image.copy()
+            for point in ordered_pts:
+                cv2.circle(debug_image, (int(point[0]), int(point[1])), 5, (0, 255, 0), -1)
+            cv2.imshow('Ordered Points', debug_image)
+            cv2.waitKey(0)
+            
+            dst = np.float32([[0, 0], [450, 0], [450, 450], [0, 450]])  # Fixed size for the Sudoku grid
             M = cv2.getPerspectiveTransform(ordered_pts, dst)
-            warp = cv2.warpPerspective(image, M, (int(side), int(side)))
+            warp = cv2.warpPerspective(image, M, (450, 450))
             
             # Debug: Show the warped image
             cv2.imshow('Warped Image', warp)
@@ -98,6 +108,14 @@ def extract_sudoku_board(image):
     print("Failed to find a contour with 4 points")
     return None
 
+def preprocess_cell(cell):
+    gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    # Resize the cell to a standard size for better OCR accuracy
+    resized = cv2.resize(thresh, (50, 50), interpolation=cv2.INTER_AREA)
+    return resized
+
 def ocr_sudoku_board(image):
     board = [[0 for _ in range(9)] for _ in range(9)]
     height, width = image.shape[:2]
@@ -105,9 +123,10 @@ def ocr_sudoku_board(image):
     for i in range(9):
         for j in range(9):
             cell = image[i * cell_height:(i + 1) * cell_height, j * cell_width:(j + 1) * cell_width]
-            text = pytesseract.image_to_string(cell, config='--psm 10')
+            cell = preprocess_cell(cell)
+            text = pytesseract.image_to_string(cell, config='--psm 10 -c tessedit_char_whitelist=0123456789')
             try:
-                num = int(text)
+                num = int(text.strip())
                 board[i][j] = num
             except ValueError:
                 board[i][j] = 0
