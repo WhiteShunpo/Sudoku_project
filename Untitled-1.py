@@ -57,6 +57,9 @@ def order_points(pts):
     return rect
 
 def extract_sudoku_board(image):
+    # Resize the image to a smaller resolution for faster processing
+    image = cv2.resize(image, (800, 800), interpolation=cv2.INTER_AREA)
+    
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
@@ -67,15 +70,13 @@ def extract_sudoku_board(image):
     
     contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Filter contours by area
+    # Filter contours by area and limit the number of contours processed
     contours = [c for c in contours if cv2.contourArea(c) > 1000]
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
     
     if not contours:
         print("No contours found")
         return None
-    
-    # Sort contours by area (largest first)
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
     
     for contour in contours:
         epsilon = 0.02 * cv2.arcLength(contour, True)  # Increase precision
@@ -112,24 +113,32 @@ def preprocess_cell(cell):
     gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-    # Resize the cell to a standard size for better OCR accuracy
-    resized = cv2.resize(thresh, (50, 50), interpolation=cv2.INTER_AREA)
+    # Apply morphological operations to clean up the image
+    kernel = np.ones((3, 3), np.uint8)
+    morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    # Resize the cell to a larger size for better OCR accuracy
+    resized = cv2.resize(morph, (100, 100), interpolation=cv2.INTER_AREA)
     return resized
 
-def ocr_sudoku_board(image):
+def ocr_sudoku_board(image, max_retries=3):
     board = [[0 for _ in range(9)] for _ in range(9)]
     height, width = image.shape[:2]
     cell_height, cell_width = height // 9, width // 9
+
     for i in range(9):
         for j in range(9):
             cell = image[i * cell_height:(i + 1) * cell_height, j * cell_width:(j + 1) * cell_width]
             cell = preprocess_cell(cell)
-            text = pytesseract.image_to_string(cell, config='--psm 10 -c tessedit_char_whitelist=0123456789')
-            try:
-                num = int(text.strip())
-                board[i][j] = num
-            except ValueError:
-                board[i][j] = 0
+            num = 0
+            for attempt in range(max_retries):
+                text = pytesseract.image_to_string(cell, config='--psm 6 -c tessedit_char_whitelist=123456789')
+                try:
+                    num = int(text.strip())
+                    if 1 <= num <= 9:
+                        break  # Valid number found, break out of retry loop
+                except ValueError:
+                    num = 0
+            board[i][j] = num
     return board
 
 def main():
